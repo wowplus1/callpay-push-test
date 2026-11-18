@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>콜페이 알림 테스트</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="콜페이">
+<meta name="theme-color" content="#0f1d44">
+<style>
+  :root{--navy:#0f1d44;--teal:#35c4c8;--blue:#2857c0;--ink:#0f1d44;--sub:#3d475f;--line:#dde2ec;--bg:#f6f7fa;--ok:#1c6b3a;--bad:#b3261e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;line-height:1.55;word-break:keep-all;
+    padding:calc(20px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom))}
+  .wrap{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  header{display:flex;align-items:center;gap:12px}
+  header img{width:48px;height:48px;border-radius:12px;border:1px solid var(--line);background:#fff}
+  h1{font-size:22px;margin:0}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px}
+  .card h2{font-size:17px;margin:0}
+  ol{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
+  button{font:inherit;font-size:17px;font-weight:700;border:0;border-radius:12px;padding:14px;background:var(--blue);color:#fff;width:100%}
+  button.sub{background:#eef1f7;color:var(--ink)}
+  button:disabled{opacity:.5}
+  textarea{width:100%;height:120px;font:12px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:10px;padding:10px;resize:vertical}
+  .st{font-size:15px;color:var(--sub)}
+  .ok{color:var(--ok);font-weight:700}
+  .bad{color:var(--bad);font-weight:700}
+  .hide{display:none}
+  .note{font-size:13px;color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><img src="icon-192.png" alt=""><h1>콜페이 알림 테스트</h1></header>
+
+  <div class="card hide" id="install">
+    <h2>먼저 홈 화면에 추가해 주세요</h2>
+    <ol>
+      <li>사파리 아래쪽 <b>공유 버튼</b>(네모에 위 화살표)을 누릅니다.</li>
+      <li><b>홈 화면에 추가</b>를 누르고, 오른쪽 위 <b>추가</b>를 누릅니다.</li>
+      <li>홈 화면에 생긴 <b>콜페이</b> 아이콘으로 다시 엽니다.</li>
+    </ol>
+    <p class="note">아이폰은 홈 화면 아이콘으로 열었을 때만 알림을 받을 수 있습니다. 카카오톡 등 다른 앱 안에서 열었다면 사파리로 다시 열어 주세요.</p>
+  </div>
+
+  <div class="card" id="main">
+    <h2>1. 알림 받기</h2>
+    <p class="st" id="status">확인 중…</p>
+    <button id="btnSub">알림 받기</button>
+  </div>
+
+  <div class="card hide" id="codeCard">
+    <h2>2. 알림 코드 보내기</h2>
+    <p class="st">아래 코드를 복사해서 Claude에게 보내 주세요. 이 코드로 테스트 알림을 보냅니다.</p>
+    <textarea id="code" readonly></textarea>
+    <button id="btnCopy">코드 복사</button>
+  </div>
+
+  <div class="card hide" id="localCard">
+    <h2>3. 이 기기에서 바로 확인</h2>
+    <p class="st">서버 없이 이 휴대폰에서 알림이 뜨는지만 먼저 봅니다.</p>
+    <button class="sub" id="btnLocal">바로 알림 띄워 보기</button>
+  </div>
+</div>
+
+<script>
+const VAPID_PUBLIC = 'BCUB0FTUuX7XF08mUgaOyizCgFeTel64h9XBZ59IDF2VXvEUUk6YCNdtzvYc7_-QKBTI6Ykin_8qilkt6suzNsk';
+const $ = (id) => document.getElementById(id);
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+let reg = null;
+
+function setStatus(html, cls) { const s = $('status'); s.innerHTML = html; s.className = 'st ' + (cls || ''); }
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+function showCode(sub) {
+  $('code').value = JSON.stringify(sub);
+  $('codeCard').classList.remove('hide');
+  $('localCard').classList.remove('hide');
+}
+
+async function init() {
+  if (isIOS && !standalone) {
+    $('install').classList.remove('hide');
+    setStatus('홈 화면 아이콘으로 열면 알림 받기를 할 수 있습니다.', 'bad');
+    $('btnSub').disabled = true;
+    return;
+  }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    setStatus('이 브라우저는 웹 알림을 지원하지 않습니다. (아이폰은 iOS 16.4 이상 필요)', 'bad');
+    $('btnSub').disabled = true;
+    return;
+  }
+  try {
+    reg = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+  } catch (e) {
+    setStatus('준비 중 오류: ' + e.message, 'bad');
+    return;
+  }
+  const sub = await reg.pushManager.getSubscription();
+  if (sub && Notification.permission === 'granted') {
+    setStatus('알림을 받고 있습니다.', 'ok');
+    $('btnSub').textContent = '알림 다시 등록';
+    showCode(sub);
+  } else if (Notification.permission === 'denied') {
+    setStatus('알림이 꺼져 있습니다. 설정 › 알림 › 콜페이에서 켜 주세요.', 'bad');
+  } else {
+    setStatus('아래 버튼을 눌러 알림을 허용해 주세요.');
+  }
+}
+
+$('btnSub').addEventListener('click', async () => {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { setStatus('알림이 허용되지 않았습니다. 설정 › 알림 › 콜페이에서 켜 주세요.', 'bad'); return; }
+    reg = reg || await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) });
+    setStatus('알림을 받고 있습니다.', 'ok');
+    showCode(sub);
+  } catch (e) {
+    setStatus('등록 중 오류: ' + e.message, 'bad');
+  }
+});
+
+$('btnCopy').addEventListener('click', async () => {
+  const t = $('code');
+  try { await navigator.clipboard.writeText(t.value); }
+  catch (_) { t.select(); document.execCommand('copy'); }
+  $('btnCopy').textContent = '복사했습니다';
+  setTimeout(() => { $('btnCopy').textContent = '코드 복사'; }, 2000);
+});
+
+$('btnLocal').addEventListener('click', async () => {
+  reg = reg || await navigator.serviceWorker.ready;
+  await reg.showNotification('콜페이 후원 알림', { body: '테스트: 1640님 30,000원 후원!', icon: 'icon-192.png' });
+});
+
+init();
+</script>
+</body>
+</html>
